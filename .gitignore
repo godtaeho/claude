@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+*.spec
+fake_print_output/
+selftest.json
+release/
+EasyPrint-windows.zip

@@ -1,0 +1,62 @@
+name: Windows 빌드 및 테스트
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: 프린터 목록 (참고용)
+        shell: powershell
+        run: Get-Printer | Format-Table Name, DriverName -AutoSize
+
+      - name: 테스트 (실제 Windows 인쇄 경로 포함)
+        run: python -m pytest -v -rs
+
+      - name: exe 빌드
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name EasyPrint main.py
+
+      - name: exe 자체 점검
+        shell: powershell
+        run: |
+          $p = Start-Process -FilePath dist\EasyPrint.exe -ArgumentList '--selftest','selftest.json' -Wait -PassThru
+          Get-Content selftest.json -Encoding UTF8
+          if ($p.ExitCode -ne 0) { exit 1 }
+
+      - name: 배포 파일 묶기
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item dist\EasyPrint.exe release\
+          Copy-Item README.md release\
+          Compress-Archive -Path release\* -DestinationPath EasyPrint-windows.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EasyPrint-windows
+          path: EasyPrint-windows.zip
+
+      - name: 태그 푸시 시 릴리스 생성
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: EasyPrint-windows.zip
