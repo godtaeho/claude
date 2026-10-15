@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from easyprint.presets import (DMPAPER_A3, DMPAPER_USER, ORIENT_LANDSCAPE, Preset, PresetStore,
-                               default_presets)
+from easyprint.presets import (DMPAPER_A3, DMPAPER_ENV_DL, DMPAPER_USER, ORIENT_LANDSCAPE,
+                               ORIENT_PORTRAIT, Preset, PresetStore, default_presets)
 
 
 def test_defaults_match_requested_formats():
@@ -11,6 +11,26 @@ def test_defaults_match_requested_formats():
     assert names == ["A4 세로 컬러", "A3 가로 컬러", "편지봉투"]
     a3 = default_presets()[1]
     assert a3.paper_id == DMPAPER_A3 and a3.orientation == ORIENT_LANDSCAPE and a3.color
+
+
+def test_envelope_default_matches_office_settings():
+    # 사무실에서 실제 쓰던 설정: 115x216, 다목적 용지함, 세로, 컬러, 단면
+    env = default_presets()[2]
+    assert env.paper_id == DMPAPER_USER
+    assert (env.custom_width_mm, env.custom_height_mm) == (115, 216)
+    assert env.bin_name == "다목적 용지함"
+    assert env.orientation == ORIENT_PORTRAIT and env.color and env.duplex == 1
+
+
+def test_old_untouched_envelope_default_is_migrated(tmp_path):
+    path = tmp_path / "presets.json"
+    old = Preset(name="편지봉투", paper_id=DMPAPER_ENV_DL, paper_name="Envelope DL",
+                 orientation=ORIENT_LANDSCAPE, color=True)
+    edited = Preset(name="내 봉투", paper_id=DMPAPER_ENV_DL, paper_name="Envelope DL", orientation=2)
+    path.write_text(json.dumps({"presets": [old.to_dict(), edited.to_dict()]}), encoding="utf-8")
+    s = PresetStore.load(path)
+    assert s.get("편지봉투").custom_width_mm == 115 and s.get("편지봉투").paper_id == DMPAPER_USER
+    assert s.get("내 봉투").paper_id == DMPAPER_ENV_DL  # 사용자가 만든 건 그대로
 
 
 def test_first_run_uses_defaults_and_roundtrips(tmp_path):

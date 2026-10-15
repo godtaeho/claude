@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from . import APP_NAME, __version__, shell
 from .backend import get_backend
-from .caps import PaperInfo, PrinterCaps
+from .caps import PaperInfo, PrinterCaps, match_bin, match_paper_by_size
 from .documents import FILE_DIALOG_TYPES, is_supported
 from .engine import JobResult, print_files
 from .presets import (DMBIN_AUTO, DMPAPER_USER, DUPLEX_LONG, DUPLEX_SHORT, DUPLEX_SIMPLEX,
@@ -146,7 +146,8 @@ class App:
         ttk.Entry(self.custom_frame, textvariable=self.cw_var, width=6).pack(side="left", padx=2)
         ttk.Label(self.custom_frame, text="mm   세로").pack(side="left")
         ttk.Entry(self.custom_frame, textvariable=self.ch_var, width=6).pack(side="left", padx=2)
-        ttk.Label(self.custom_frame, text="mm  (프린터가 지원해야 적용됨)", style="Hint.TLabel").pack(side="left")
+        self.custom_hint = ttk.Label(self.custom_frame, text="", style="Hint.TLabel")
+        self.custom_hint.pack(side="left")
 
         ttk.Label(of, text="방향").grid(row=2, column=0, sticky="w")
         self.orient_var = tk.IntVar(value=ORIENT_PORTRAIT)
@@ -211,6 +212,8 @@ class App:
         self.sendto_btn.pack(side="right")
         self._update_sendto_btn()
 
+        for v in (self.cw_var, self.ch_var):
+            v.trace_add("write", lambda *a: self._update_custom_hint())
         for v in (self.paper_var, self.orient_var, self.color_var, self.bin_var, self.duplex_var,
                   self.scale_var, self.rotate_var, self.copies_var, self.cw_var, self.ch_var, self.printer_var):
             v.trace_add("write", lambda *a: self._update_modified())
@@ -295,9 +298,7 @@ class App:
             # 급지함
             bidx = 0
             if p.bin_id != DMBIN_AUTO:
-                found = next((i for i, (bid, _) in enumerate(caps.bins) if bid == p.bin_id), None)
-                if found is None:
-                    found = next((i for i, (_, bn) in enumerate(caps.bins) if bn == p.bin_name), None)
+                found = match_bin(caps.bins, p.bin_id, p.bin_name)
                 if found is None:
                     warn.append(f"⚠ 급지함 '{p.bin_name}'이(가) 없어 자동 선택으로 출력합니다.")
                 else:
@@ -346,8 +347,20 @@ class App:
         custom = self.paper_cb.current() == len(self.caps.papers if self.caps else [])
         if custom:
             self.custom_frame.grid()
+            self._update_custom_hint()
         else:
             self.custom_frame.grid_remove()
+
+    def _update_custom_hint(self):
+        try:
+            w, h = float(self.cw_var.get()), float(self.ch_var.get())
+        except ValueError:
+            return self.custom_hint.configure(text="mm")
+        same = match_paper_by_size(self.caps.papers, w, h) if self.caps else None
+        if same:
+            self.custom_hint.configure(text=f"mm  → 프린터에 등록된 '{same.name}' 용지로 출력")
+        else:
+            self.custom_hint.configure(text="mm  (프린터 드라이버가 사용자 지정 크기를 지원해야 적용)")
 
     # ------------------------------------------------------------ 프리셋
     def _rebuild_preset_buttons(self):
@@ -425,7 +438,15 @@ class App:
             cur = self._collect(validate=False)
         except Exception:
             return
-        changed = saved is not None and cur.to_dict() != saved.to_dict()
+        if saved is None:
+            return self.modified_lbl.configure(text="")
+        now, ref = cur.to_dict(), saved.to_dict()
+        # 저장된 급지함이 이 프린터에서 다른 이름으로 찾아진 경우(예: 다목적 용지함 → 수동 급지)는 같은 것으로 봄
+        if self.caps and saved.bin_id != DMBIN_AUTO:
+            idx = match_bin(self.caps.bins, saved.bin_id, saved.bin_name)
+            if idx is not None and self.bin_cb.current() == idx + 1:
+                now["bin_id"], now["bin_name"] = ref["bin_id"], ref["bin_name"]
+        changed = now != ref
         self.modified_lbl.configure(text="● 수정됨 (저장하지 않아도 이번 출력엔 적용됩니다)" if changed else "")
 
     def save_current(self):

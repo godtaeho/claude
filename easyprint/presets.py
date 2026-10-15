@@ -24,6 +24,7 @@ DUPLEX_LONG = 2  # DMDUP_VERTICAL: 긴 쪽 넘김
 DUPLEX_SHORT = 3  # DMDUP_HORIZONTAL: 짧은 쪽 넘김
 
 DMBIN_AUTO = 0  # 0 이면 급지함을 지정하지 않음(프린터 판단)
+DMBIN_MANUAL = 4  # 수동 급지 (다목적 용지함은 프린터마다 번호가 달라 이름으로도 찾음)
 
 SCALE_FIT = "fit"
 SCALE_ACTUAL = "actual"
@@ -85,9 +86,23 @@ def default_presets() -> list[Preset]:
                orientation=ORIENT_PORTRAIT, color=True),
         Preset(name="A3 가로 컬러", paper_id=DMPAPER_A3, paper_name="A3",
                orientation=ORIENT_LANDSCAPE, color=True),
-        Preset(name="편지봉투", paper_id=DMPAPER_ENV_DL, paper_name="Envelope DL",
-               orientation=ORIENT_LANDSCAPE, color=True),
+        # 실제 사무실 봉투 출력 설정: 115 x 216 mm, 다목적 용지함, 세로, 컬러, 단면
+        Preset(name="편지봉투", paper_id=DMPAPER_USER, paper_name="사용자 지정",
+               custom_width_mm=115.0, custom_height_mm=216.0,
+               orientation=ORIENT_PORTRAIT, color=True,
+               bin_id=DMBIN_MANUAL, bin_name="다목적 용지함", duplex=DUPLEX_SIMPLEX),
     ]
+
+
+# 1.0.0 의 '편지봉투' 기본값. 사용자가 손대지 않은 채 저장돼 있으면 새 기본값으로 바꿔 준다.
+_OLD_ENVELOPE_DEFAULT = Preset(name="편지봉투", paper_id=DMPAPER_ENV_DL, paper_name="Envelope DL",
+                               orientation=ORIENT_LANDSCAPE, color=True).to_dict()
+
+
+def _migrate(p: Preset) -> Preset:
+    if p.to_dict() == _OLD_ENVELOPE_DEFAULT:
+        return next(x for x in default_presets() if x.name == "편지봉투")
+    return p
 
 
 def config_dir() -> Path:
@@ -115,7 +130,7 @@ class PresetStore:
             presets = []
             for item in data.get("presets", []):
                 try:
-                    p = Preset.from_dict(item)
+                    p = _migrate(Preset.from_dict(item))
                 except (TypeError, ValueError):
                     continue
                 if not any(x.name == p.name for x in presets):

@@ -11,9 +11,10 @@ from __future__ import annotations
 import ctypes
 import sys
 from ctypes import wintypes
+from dataclasses import replace
 from PIL import Image
 
-from .caps import PaperInfo, PrinterCaps
+from .caps import PaperInfo, PrinterCaps, match_paper_by_size
 from .layout import DeviceMetrics, Placement
 from .presets import DMBIN_AUTO, DMPAPER_USER, DUPLEX_SIMPLEX, Preset
 
@@ -348,8 +349,15 @@ def build_devmode(printer: str, preset: Preset) -> tuple[ctypes.Array, list[str]
         chk = DEVMODEW.from_buffer(out)
         if chk.dmPaperSize != preset.paper_id:
             warnings.append(f"프린터가 용지 '{preset.paper_name}'을(를) 다른 용지로 바꿨습니다 (번호 {chk.dmPaperSize})")
+        elif preset.paper_id == DMPAPER_USER and (
+                abs(chk.dmPaperWidth - round(preset.custom_width_mm * 10)) > 10
+                or abs(chk.dmPaperLength - round(preset.custom_height_mm * 10)) > 10):
+            warnings.append(f"프린터가 사용자 지정 크기 {preset.custom_width_mm:g} x {preset.custom_height_mm:g} mm 를 "
+                            f"{chk.dmPaperWidth / 10:g} x {chk.dmPaperLength / 10:g} mm 로 바꿨습니다")
         if chk.dmOrientation != preset.orientation:
             warnings.append("프린터가 용지 방향 설정을 바꿨습니다")
+        if preset.bin_id != DMBIN_AUTO and chk.dmDefaultSource != preset.bin_id:
+            warnings.append(f"프린터가 급지함 '{preset.bin_name}' 대신 다른 급지함을 선택했습니다")
         del chk
     return out, warnings
 
@@ -362,6 +370,15 @@ class WinPrinterDevice:
         self.name = printer or default_printer()
         if not self.name:
             raise PrinterError("설치된 기본 프린터가 없습니다")
+        if preset.paper_id == DMPAPER_USER:
+            # 같은 크기의 용지가 프린터에 이미 등록돼 있으면(예: 115x216 사용자 용지) 그 번호로 출력하는 편이 확실함
+            try:
+                same = match_paper_by_size(get_capabilities(self.name).papers,
+                                           preset.custom_width_mm, preset.custom_height_mm)
+            except PrinterError:
+                same = None
+            if same:
+                preset = replace(preset, paper_id=same.id, paper_name=same.name)
         self._devmode, self.warnings = build_devmode(self.name, preset)
         self.hdc = gdi32.CreateDCW("WINSPOOL", self.name, None, self._devmode)
         if not self.hdc:

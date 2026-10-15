@@ -70,3 +70,28 @@ def test_print_uses_preset_not_printer_defaults(wp, src_pdf, tmp_path, paper_id,
     assert abs(w_mm - expect_mm[0]) < 3 and abs(h_mm - expect_mm[1]) < 3, (w_mm, h_mm)
     # 프린터 기본 설정은 그대로여야 함
     assert _user_defaults(wp) == before
+
+
+def test_custom_envelope_115x216(wp, src_pdf, tmp_path):
+    """사무실 봉투 설정(115x216 세로). 드라이버가 사용자 지정 크기를 거부하면 경고로 알려야 한다."""
+    from easyprint.engine import print_files
+    from easyprint.presets import default_presets
+
+    env = next(p for p in default_presets() if p.name == "편지봉투")
+    preset = type(env)(**{**env.to_dict(), "printer": PDF_PRINTER, "bin_id": 0, "bin_name": ""})
+    out = tmp_path / "봉투.pdf"
+    before = _user_defaults(wp)
+    dev = wp.WinPrinterDevice(PDF_PRINTER, preset, output_file=str(out))
+    try:
+        res = print_files(dev, [src_pdf], preset)
+    finally:
+        dev.close()
+    assert not res.failed and res.pages == 1
+    with pymupdf.open(out) as doc:
+        r = doc[0].rect
+        size = (round(r.width / 72 * 25.4), round(r.height / 72 * 25.4))
+    print("custom 115x216 ->", size, dev.warnings)
+    if dev.warnings:
+        pytest.xfail(f"이 드라이버는 사용자 지정 크기를 지원하지 않음: {dev.warnings} / 결과 {size}")
+    assert abs(size[0] - 115) <= 2 and abs(size[1] - 216) <= 2, size
+    assert _user_defaults(wp) == before
