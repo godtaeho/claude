@@ -771,8 +771,13 @@ class App:
 
 def selftest(out_file: str) -> int:
     """배포용 exe 점검: 필수 모듈이 모두 포함됐는지, 프린터 정보를 읽을 수 있는지 확인해 파일로 남긴다."""
+    import faulthandler
     import json
     import traceback
+
+    # 멈추면 60초 뒤 모든 스레드의 위치를 파일로 남기고 종료 (CI 에서 원인 추적용)
+    trace = open(out_file + ".trace", "w", encoding="utf-8")
+    faulthandler.dump_traceback_later(60, exit=True, file=trace)
 
     import PIL
     import pymupdf
@@ -800,6 +805,9 @@ def selftest(out_file: str) -> int:
         report["ok"] = False
         report["error"] = traceback.format_exc()
     Path(out_file).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    faulthandler.cancel_dump_traceback_later()
+    trace.close()
+    Path(out_file + ".trace").unlink(missing_ok=True)
     return 0 if report["ok"] else 1
 
 

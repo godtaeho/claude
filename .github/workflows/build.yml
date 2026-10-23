@@ -42,8 +42,10 @@ jobs:
           if (-not $p.WaitForExit(120000)) {
             Get-Process | Where-Object { $_.Path -like '*EasyPrint*' } | Format-Table Id, ProcessName, MainWindowTitle -AutoSize
             Get-Process | Where-Object { $_.Path -like '*EasyPrint*' } | Stop-Process -Force
-            Write-Error "selftest 가 2분 안에 끝나지 않음 (오류 대화상자가 떠 있을 가능성)"; exit 1
+            if (Test-Path selftest.json.trace) { Get-Content selftest.json.trace }
+            Write-Error "selftest did not finish within 2 minutes"; exit 1
           }
+          if (Test-Path selftest.json.trace) { Get-Content selftest.json.trace }
           Get-Content selftest.json -Encoding UTF8
           if ($p.ExitCode -ne 0) { exit 1 }
 
@@ -70,7 +72,7 @@ jobs:
         run: |
           VER=$(python -c "import easyprint; print(easyprint.__version__)")
           if gh release view "v$VER" >/dev/null 2>&1; then
-            echo "v$VER 릴리스가 이미 있어 건너뜀 (배포하려면 __version__ 을 올리세요)"
+            echo "release v$VER already exists - skip (bump __version__ to publish)"
             exit 0
           fi
           python -c "import hashlib,sys; print(hashlib.sha256(open('dist/EasyPrint.exe','rb').read()).hexdigest())" > EasyPrint.exe.sha256
@@ -89,10 +91,10 @@ jobs:
           from easyprint import updater
           exe = Path("upd/EasyPrint.exe")
           ver = updater.update_now(exe, current="0")
-          assert ver, "최신 릴리스를 찾지 못함"
+          assert ver, "latest release not found"
           size = exe.stat().st_size
           assert size > 1_000_000 and exe.read_bytes()[:2] == b"MZ", size
-          print(f"OK: v{ver} 내려받아 교체 완료 ({size:,} bytes, SHA-256 검증 통과)")
+          print(f"OK: downloaded v{ver}, sha256 verified, replaced ({size:,} bytes)")
           PY
-          timeout 120 ./upd/EasyPrint.exe --selftest upd/selftest.json || echo "selftest 종료코드 $?"
+          timeout 120 ./upd/EasyPrint.exe --selftest upd/selftest.json || echo "selftest exit code $?"
           sleep 5; cat upd/selftest.json || true
