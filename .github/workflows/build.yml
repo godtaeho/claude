@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +38,12 @@ jobs:
       - name: exe 자체 점검
         shell: powershell
         run: |
-          $p = Start-Process -FilePath dist\EasyPrint.exe -ArgumentList '--selftest','selftest.json' -Wait -PassThru
+          $p = Start-Process -FilePath dist\EasyPrint.exe -ArgumentList '--selftest','selftest.json' -PassThru
+          if (-not $p.WaitForExit(120000)) {
+            Get-Process | Where-Object { $_.Path -like '*EasyPrint*' } | Format-Table Id, ProcessName, MainWindowTitle -AutoSize
+            Get-Process | Where-Object { $_.Path -like '*EasyPrint*' } | Stop-Process -Force
+            Write-Error "selftest 가 2분 안에 끝나지 않음 (오류 대화상자가 떠 있을 가능성)"; exit 1
+          }
           Get-Content selftest.json -Encoding UTF8
           if ($p.ExitCode -ne 0) { exit 1 }
 
@@ -88,5 +94,5 @@ jobs:
           assert size > 1_000_000 and exe.read_bytes()[:2] == b"MZ", size
           print(f"OK: v{ver} 내려받아 교체 완료 ({size:,} bytes, SHA-256 검증 통과)")
           PY
-          ./upd/EasyPrint.exe --selftest upd/selftest.json || true
+          timeout 120 ./upd/EasyPrint.exe --selftest upd/selftest.json || echo "selftest 종료코드 $?"
           sleep 5; cat upd/selftest.json || true
