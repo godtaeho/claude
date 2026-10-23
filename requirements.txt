@@ -1,3 +1,5 @@
-pymupdf>=1.24
-pillow>=10.0
-pywin32>=306; sys_platform == "win32"
+# 자동 업데이트로 바로 배포되므로 검증된 버전으로 고정한다.
+# (PyMuPDF 2.0 은 exe 로 묶으면 layout 모듈 리소스가 빠져 실행 즉시 오류 → 1.28.2 고정)
+pymupdf==1.28.2
+pillow==12.3.0
+pywin32==312; sys_platform == "win32"
