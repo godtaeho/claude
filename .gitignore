@@ -8,3 +8,5 @@ fake_print_output/
 selftest.json
 release/
 EasyPrint-windows.zip
+EasyPrint.exe.sha256
+notes.txt

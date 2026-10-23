@@ -115,6 +115,7 @@ class PresetStore:
     path: Path
     presets: list[Preset] = field(default_factory=list)
     last_used: str = ""
+    auto_update: bool = True
     load_warning: str = ""
 
     @classmethod
@@ -137,6 +138,7 @@ class PresetStore:
                     presets.append(p)
             store.presets = presets or default_presets()
             store.last_used = str(data.get("last_used", ""))
+            store.auto_update = bool(data.get("auto_update", True))
         except (OSError, ValueError, AttributeError) as e:
             # 파일이 깨졌으면 백업해 두고 기본값으로 시작
             backup = path.with_suffix(".broken.json")
@@ -155,6 +157,7 @@ class PresetStore:
         data = {
             "version": 1,
             "last_used": self.last_used,
+            "auto_update": self.auto_update,
             "presets": [p.to_dict() for p in self.presets],
         }
         tmp = self.path.with_suffix(".tmp")

@@ -9,7 +9,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from . import APP_NAME, __version__, shell
+from . import APP_NAME, __version__, shell, updater
 from .backend import get_backend
 from .caps import PaperInfo, PrinterCaps, match_bin, match_paper_by_size
 from .documents import FILE_DIALOG_TYPES, is_supported
@@ -49,6 +49,11 @@ class App:
             messagebox.showwarning(APP_NAME, self.store.load_warning)
         root.after(100, self._poll)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.updated_to: str | None = None
+        self._update_running = False
+        if updater.is_frozen_exe():
+            updater.cleanup(updater.current_exe())
+            root.after(1500, self._auto_update_tick)
 
     # ------------------------------------------------------------ 화면 구성
     def _setup_style(self):
@@ -211,6 +216,19 @@ class App:
         self.sendto_btn = ttk.Button(foot, command=self.toggle_sendto)
         self.sendto_btn.pack(side="right")
         self._update_sendto_btn()
+        self.auto_update_var = tk.BooleanVar(value=self.store.auto_update)
+        self.auto_update_cb = ttk.Checkbutton(foot, text="자동 업데이트", variable=self.auto_update_var,
+                                              command=self._toggle_auto_update)
+        self.auto_update_cb.pack(side="left")
+        self.check_update_btn = ttk.Button(foot, text="지금 확인", command=lambda: self.start_update(manual=True))
+        self.check_update_btn.pack(side="left", padx=4)
+        self.restart_btn = ttk.Button(foot, text="새 버전으로 다시 시작", command=self.restart_to_update)
+        self.update_lbl = ttk.Label(foot, text="", style="Hint.TLabel")
+        self.update_lbl.pack(side="left", padx=4)
+        if not updater.is_frozen_exe():
+            self.auto_update_cb.configure(state="disabled")
+            self.check_update_btn.configure(state="disabled")
+            self.update_lbl.configure(text="(자동 업데이트는 exe 버전에서만)")
 
         for v in (self.cw_var, self.ch_var):
             v.trace_add("write", lambda *a: self._update_custom_hint())
@@ -639,6 +657,8 @@ class App:
                     self._set_busy(False)
                     self.status_var.set("출력 실패")
                     messagebox.showerror(APP_NAME, f"출력하지 못했습니다.\n\n{val}")
+                elif kind == "update":
+                    self._on_update_result(*val)
         except queue.Empty:
             pass
         self.root.after(100, self._poll)
@@ -679,6 +699,66 @@ class App:
             messagebox.showerror(APP_NAME, f"'보내기' 메뉴 설정에 실패했습니다.\n{e}")
         self._update_sendto_btn()
 
+    # ------------------------------------------------------------ 자동 업데이트
+    def _toggle_auto_update(self):
+        self.store.auto_update = bool(self.auto_update_var.get())
+        self._save_store()
+        if self.store.auto_update:
+            self.start_update()
+
+    def _auto_update_tick(self):
+        if self.store.auto_update and not self.updated_to:
+            self.start_update()
+        self.root.after(updater.CHECK_INTERVAL_MS, self._auto_update_tick)
+
+    def start_update(self, manual: bool = False):
+        """백그라운드에서 확인 → 다운로드 → 교체. 출력 중이어도 방해하지 않는다."""
+        if self._update_running or self.updated_to or not updater.is_frozen_exe():
+            return
+        self._update_running = True
+        self.update_lbl.configure(text="업데이트 확인 중...")
+        exe = updater.current_exe()
+
+        def progress(done, total):
+            if total:
+                self.msgs.put(("update", ("progress", f"새 버전 내려받는 중... {done * 100 // total}%", manual)))
+
+        def work():
+            try:
+                ver = updater.update_now(exe, progress=progress)
+                self.msgs.put(("update", ("installed" if ver else "latest", ver, manual)))
+            except Exception as e:
+                self.msgs.put(("update", ("failed", str(e), manual)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_update_result(self, kind: str, val, manual: bool):
+        if kind == "progress":
+            self.update_lbl.configure(text=val)
+            return
+        self._update_running = False
+        if kind == "installed":
+            self.updated_to = val
+            self.update_lbl.configure(text=f"✔ v{val} 설치 완료 (다음 실행부터 적용)")
+            self.restart_btn.pack(side="left", padx=4)
+            self.check_update_btn.pack_forget()
+        elif kind == "latest":
+            self.update_lbl.configure(text=f"최신 버전입니다 (v{__version__})")
+        else:
+            self.update_lbl.configure(text="업데이트 확인 실패 (다음에 다시 시도)")
+            if manual:
+                messagebox.showwarning(APP_NAME, f"업데이트하지 못했습니다.\n{val}")
+
+    def restart_to_update(self):
+        if self.worker and self.worker.is_alive():
+            return messagebox.showinfo(APP_NAME, "출력이 끝난 뒤에 다시 시작하세요.")
+        self._save_store()
+        try:
+            updater.spawn(updater.current_exe(), list(self.files))
+        except OSError as e:
+            return messagebox.showerror(APP_NAME, f"다시 시작하지 못했습니다. 프로그램을 직접 다시 실행해 주세요.\n{e}")
+        self.root.destroy()
+
     def _on_close(self):
         if self.worker and self.worker.is_alive():
             if not messagebox.askyesno(APP_NAME, "출력 중입니다. 취소하고 닫을까요?"):
@@ -710,6 +790,11 @@ def selftest(out_file: str) -> int:
         if sys.platform == "win32":
             import pythoncom  # noqa: F401  (한글/오피스 변환에 필요)
             import win32com.client  # noqa: F401
+        try:  # 업데이트 서버 확인 (설치는 하지 않음, 실패해도 점검은 통과)
+            info = updater.check(current="0")
+            report["update_check"] = {"latest": info.version, "sha256": info.sha256[:12]} if info else "no release"
+        except Exception as e:
+            report["update_check"] = f"error: {e}"
         report["ok"] = True
     except Exception:
         report["ok"] = False
@@ -722,6 +807,8 @@ def run(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) == 2 and argv[0] == "--selftest":
         sys.exit(selftest(argv[1]))
+    if updater.ensure_installed(argv):  # 처음 실행: 설치 폴더로 복사 + 바로가기 → 설치본 실행
+        return
     if sys.platform == "win32":
         try:  # 고해상도 모니터에서 글자가 흐려지지 않게
             import ctypes

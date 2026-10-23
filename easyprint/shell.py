@@ -12,10 +12,10 @@ def sendto_shortcut_path() -> Path:
     return Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "SendTo" / f"{APP_NAME}.lnk"
 
 
-def _target() -> tuple[str, str, str]:
+def _target(exe_path: Path | None = None) -> tuple[str, str, str]:
     """(실행 파일, 인수, 작업 폴더)"""
-    if getattr(sys, "frozen", False):  # PyInstaller exe
-        exe = sys.executable
+    if exe_path or getattr(sys, "frozen", False):  # PyInstaller exe
+        exe = str(exe_path or sys.executable)
         return exe, "", str(Path(exe).parent)
     main = Path(__file__).resolve().parent.parent / "main.py"
     pyw = Path(sys.executable).with_name("pythonw.exe")
@@ -26,13 +26,13 @@ def is_registered() -> bool:
     return sys.platform == "win32" and sendto_shortcut_path().exists()
 
 
-def register_sendto() -> Path:
+def register_sendto(exe_path: Path | None = None) -> Path:
     import pythoncom
     import win32com.client
 
     pythoncom.CoInitialize()
     try:
-        exe, args, workdir = _target()
+        exe, args, workdir = _target(exe_path)
         link = sendto_shortcut_path()
         shell = win32com.client.Dispatch("WScript.Shell")
         sc = shell.CreateShortCut(str(link))

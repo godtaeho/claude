@@ -3,7 +3,6 @@ name: Windows 빌드 및 테스트
 on:
   push:
     branches: ["**"]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -55,8 +54,39 @@ jobs:
           name: EasyPrint-windows
           path: EasyPrint-windows.zip
 
-      - name: 태그 푸시 시 릴리스 생성
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: EasyPrint-windows.zip
+      # 자동 업데이트용 릴리스: easyprint/__init__.py 의 __version__ 을 올려서 푸시하면 새 릴리스가 생기고,
+      # 사용자 PC 의 간편출력이 이를 감지해 자동으로 설치한다. (같은 버전이면 아무것도 하지 않음)
+      - name: 새 버전이면 릴리스 생성 (자동 업데이트 배포)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/easy-print-program-5whsdf')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER=$(python -c "import easyprint; print(easyprint.__version__)")
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            echo "v$VER 릴리스가 이미 있어 건너뜀 (배포하려면 __version__ 을 올리세요)"
+            exit 0
+          fi
+          python -c "import hashlib,sys; print(hashlib.sha256(open('dist/EasyPrint.exe','rb').read()).hexdigest())" > EasyPrint.exe.sha256
+          cat EasyPrint.exe.sha256
+          git log -1 --pretty=%B > notes.txt
+          gh release create "v$VER" dist/EasyPrint.exe EasyPrint.exe.sha256 EasyPrint-windows.zip \
+            --target "$GITHUB_SHA" --title "간편출력 v$VER" --notes-file notes.txt
+
+      - name: 배포된 릴리스로 자동 업데이트 실제 검증 (다운로드 + 해시 + 교체)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/easy-print-program-5whsdf')
+        shell: bash
+        run: |
+          mkdir -p upd && printf 'old build' > upd/EasyPrint.exe
+          python - <<'PY'
+          from pathlib import Path
+          from easyprint import updater
+          exe = Path("upd/EasyPrint.exe")
+          ver = updater.update_now(exe, current="0")
+          assert ver, "최신 릴리스를 찾지 못함"
+          size = exe.stat().st_size
+          assert size > 1_000_000 and exe.read_bytes()[:2] == b"MZ", size
+          print(f"OK: v{ver} 내려받아 교체 완료 ({size:,} bytes, SHA-256 검증 통과)")
+          PY
+          ./upd/EasyPrint.exe --selftest upd/selftest.json || true
+          sleep 5; cat upd/selftest.json || true
