@@ -46,6 +46,7 @@ jobs:
             Write-Error "selftest did not finish within 2 minutes"; exit 1
           }
           if (Test-Path selftest.json.trace) { Get-Content selftest.json.trace }
+          if (Test-Path selftest.json.crash) { Get-Content selftest.json.crash; exit 1 }
           Get-Content selftest.json -Encoding UTF8
           if ($p.ExitCode -ne 0) { exit 1 }
 
